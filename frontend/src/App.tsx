@@ -6,7 +6,7 @@ import { VideoPlayer, VideoPlayerRef } from './components/VideoPlayer';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { useFullscreen } from './hooks/useFullscreen';
 import { saveConfig, loadConfig, clearConfig } from './utils/storage';
-import { AppMode, ParkingSpot, ParkingStats, Point, VideoSource } from './types';
+import { AppMode, ParkingSpot, ParkingStats, Point, VideoSource, DebugInfo } from './types';
 
 function App() {
   const [mode, setMode] = useState<AppMode>('setup');
@@ -17,6 +17,7 @@ function App() {
   const [currentPolygon, setCurrentPolygon] = useState<Point[]>([]);
   const [isPanelHidden, setIsPanelHidden] = useState(false);
   const [occupancyMap, setOccupancyMap] = useState<Record<string, boolean>>({});
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
   
   const videoPlayerRef = useRef<VideoPlayerRef>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -50,6 +51,9 @@ function App() {
           const data = JSON.parse(event.data);
           if (data.occupancyMap) {
             setOccupancyMap(data.occupancyMap);
+          }
+          if (data.debug) {
+            setDebugInfo(data.debug);
           }
         } catch (e) {
           console.error('Failed to parse WS message:', e);
@@ -214,6 +218,7 @@ function App() {
     setCurrentPolygon([]);
     setCurrentSpotIndex(0);
     setOccupancyMap({});
+    setDebugInfo(null);
   }, []);
 
   if (mode === 'setup') {
@@ -257,6 +262,8 @@ function App() {
           spots={mode === 'monitoring' ? spotsWithOccupancy : spots}
           isCalibrating={mode === 'calibration'}
           currentPolygon={currentPolygon}
+          debugInfo={mode === 'monitoring' ? debugInfo : null}
+          showDebug={mode === 'monitoring'}
           onCanvasClick={handleCanvasClick}
         />
 

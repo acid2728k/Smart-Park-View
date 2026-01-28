@@ -29,3 +29,21 @@ export interface VideoSource {
   url?: string;
   file?: File;
 }
+
+export interface VehicleBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  conf: number;
+}
+
+export interface SpotDebugInfo {
+  ratio: number;
+  occupied: boolean;
+}
+
+export interface DebugInfo {
+  vehicleBoxes: VehicleBox[];
+  spotInfo: Record<string, SpotDebugInfo>;
+}

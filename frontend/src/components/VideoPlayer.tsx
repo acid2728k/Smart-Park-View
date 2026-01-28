@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
-import { ParkingSpot, Point } from '../types';
+import { ParkingSpot, Point, DebugInfo } from '../types';
 import { getPolygonCenter } from '../utils/geometry';
 
 interface VideoPlayerProps {
@@ -7,6 +7,8 @@ interface VideoPlayerProps {
   spots: ParkingSpot[];
   isCalibrating: boolean;
   currentPolygon: Point[];
+  debugInfo?: DebugInfo | null;
+  showDebug?: boolean;
   onCanvasClick?: (point: Point) => void;
   onVideoLoaded?: (width: number, height: number) => void;
 }
@@ -21,6 +23,8 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
   spots,
   isCalibrating,
   currentPolygon,
+  debugInfo,
+  showDebug = true,
   onCanvasClick,
   onVideoLoaded,
 }, ref) => {
@@ -68,12 +72,29 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Draw vehicle bounding boxes (debug)
+    if (showDebug && debugInfo?.vehicleBoxes) {
+      debugInfo.vehicleBoxes.forEach((box) => {
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+        ctx.setLineDash([]);
+        
+        // Draw confidence
+        ctx.fillStyle = '#00ffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(`${(box.conf * 100).toFixed(0)}%`, box.x1 + 4, box.y1 - 4);
+      });
+    }
+
     // Draw parking spots
     spots.forEach((spot) => {
       if (spot.polygon.length < 3) return;
 
       const color = spot.isOccupied ? '#ef4444' : '#22c55e';
       
+      // Draw polygon fill
       ctx.beginPath();
       ctx.moveTo(spot.polygon[0].x, spot.polygon[0].y);
       spot.polygon.forEach((point, i) => {
@@ -88,21 +109,34 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // Draw label
+      // Get debug info for this spot
+      const spotDebug = debugInfo?.spotInfo?.[spot.id];
       const center = getPolygonCenter(spot.polygon);
       
       // Draw label background
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      const text = spot.name;
-      ctx.font = 'bold 16px sans-serif';
-      const textWidth = ctx.measureText(text).width;
-      ctx.fillRect(center.x - textWidth / 2 - 4, center.y - 10, textWidth + 8, 20);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      const labelText = spot.name;
+      ctx.font = 'bold 14px sans-serif';
+      const labelWidth = ctx.measureText(labelText).width;
       
-      // Draw label text
+      // Calculate label height based on debug info
+      const labelHeight = showDebug && spotDebug ? 36 : 22;
+      ctx.fillRect(center.x - labelWidth / 2 - 6, center.y - labelHeight / 2, labelWidth + 12, labelHeight);
+      
+      // Draw spot name
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, center.x, center.y);
+      const nameY = showDebug && spotDebug ? center.y - 7 : center.y;
+      ctx.fillText(labelText, center.x, nameY);
+      
+      // Draw debug ratio
+      if (showDebug && spotDebug) {
+        const ratioText = `${(spotDebug.ratio * 100).toFixed(1)}%`;
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = spotDebug.ratio >= 0.20 ? '#fbbf24' : '#9ca3af';
+        ctx.fillText(ratioText, center.x, center.y + 9);
+      }
     });
 
     // Draw current polygon being drawn (calibration mode)
@@ -137,7 +171,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
         ctx.fillText((index + 1).toString(), point.x, point.y);
       });
     }
-  }, [spots, isCalibrating, currentPolygon]);
+  }, [spots, isCalibrating, currentPolygon, debugInfo, showDebug]);
 
   // Handle video source change
   useEffect(() => {
