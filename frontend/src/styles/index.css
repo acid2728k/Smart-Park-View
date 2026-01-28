@@ -452,12 +452,14 @@ body {
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
   padding: 24px;
   z-index: 15;
+  pointer-events: none; /* Allow clicks to pass through to canvas */
 }
 
 .calibration-info {
   max-width: 600px;
   margin: 0 auto;
   text-align: center;
+  pointer-events: none;
 }
 
 .calibration-info h3 {
@@ -477,6 +479,11 @@ body {
   display: flex;
   gap: 12px;
   justify-content: center;
+  pointer-events: auto; /* Buttons should be clickable */
+}
+
+.calibration-actions .btn {
+  pointer-events: auto; /* Ensure buttons receive clicks */
 }
 
 /* Fullscreen */

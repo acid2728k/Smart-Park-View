@@ -8,18 +8,33 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_sock import Sock
 
-from detector import ParkingDetector
+from detector import YOLOParkingDetector
 
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
 
-# Initialize detector
-detector = ParkingDetector()
+# Initialize YOLO-based detector
+print('Initializing parking detector with YOLOv8...')
+detector = YOLOParkingDetector(overlap_threshold=0.30)
+
 
 @app.route('/api/health', methods=['GET'])
 def health():
+    return jsonify({
+        'status': 'ok',
+        'detector': 'YOLOv8' if detector.model is not None else 'fallback'
+    })
+
+
+@app.route('/api/config', methods=['POST'])
+def update_config():
+    """Update detector configuration."""
+    data = request.json
+    if 'overlap_threshold' in data:
+        detector.set_overlap_threshold(float(data['overlap_threshold']))
     return jsonify({'status': 'ok'})
+
 
 @app.route('/api/process-frame', methods=['POST'])
 def process_frame():
@@ -41,9 +56,11 @@ def process_frame():
         occupancy_map = detector.detect_occupancy(frame, spots)
         
         return jsonify({
-            'occupancyMap': occupancy_map
+            'occupancyMap': occupancy_map,
+            'detections': len(detector.last_detections)
         })
     except Exception as e:
+        print(f'Error processing frame: {e}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -73,7 +90,8 @@ def websocket(ws):
                 
                 # Send result back
                 ws.send(json.dumps({
-                    'occupancyMap': occupancy_map
+                    'occupancyMap': occupancy_map,
+                    'detections': len(detector.last_detections)
                 }))
                 
         except Exception as e:
