@@ -170,6 +170,20 @@ Key detector parameters (can be adjusted in `detector.py`):
 | `edge_density_threshold_occupied` | 4.5 | Edge density % for occupied |
 | `intensity_std_threshold_occupied` | 25.0 | Intensity std for occupied |
 
+## Camera Setup
+
+For detailed instructions on connecting cameras and video sources, see:
+
+**[CAMERA_SETUP.md](CAMERA_SETUP.md)**
+
+Covers:
+- USB webcams
+- IP cameras (RTSP)
+- HTTP/MJPEG streams
+- Raspberry Pi cameras
+- Mobile phones as cameras
+- Multiple camera setups
+
 ## License
 
 MIT
