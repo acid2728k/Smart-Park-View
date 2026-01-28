@@ -30,20 +30,26 @@ export interface VideoSource {
   file?: File;
 }
 
-export interface VehicleBox {
+// Debug types
+export interface Detection {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
   conf: number;
+  cls: string;
+  isVehicle?: boolean;
 }
 
 export interface SpotDebugInfo {
-  ratio: number;
+  yoloRatio: number;
+  textureScore: number;
   occupied: boolean;
+  decision: string;
 }
 
 export interface DebugInfo {
-  vehicleBoxes: VehicleBox[];
+  allDetections?: Detection[];
+  vehicleBoxes?: Detection[];
   spotInfo: Record<string, SpotDebugInfo>;
 }

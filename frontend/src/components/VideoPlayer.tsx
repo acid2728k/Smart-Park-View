@@ -72,19 +72,30 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw vehicle bounding boxes (debug)
-    if (showDebug && debugInfo?.vehicleBoxes) {
-      debugInfo.vehicleBoxes.forEach((box) => {
-        ctx.strokeStyle = '#00ffff';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+    // Draw ALL detections (debug mode)
+    if (showDebug && debugInfo?.allDetections) {
+      debugInfo.allDetections.forEach((det) => {
+        const isVehicle = det.isVehicle;
+        const color = isVehicle ? '#00ffff' : '#ff00ff80';
+        
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isVehicle ? 2 : 1;
+        ctx.setLineDash(isVehicle ? [] : [4, 4]);
+        ctx.strokeRect(det.x1, det.y1, det.x2 - det.x1, det.y2 - det.y1);
         ctx.setLineDash([]);
         
-        // Draw confidence
-        ctx.fillStyle = '#00ffff';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.fillText(`${(box.conf * 100).toFixed(0)}%`, box.x1 + 4, box.y1 - 4);
+        // Label
+        const label = `${det.cls} ${(det.conf * 100).toFixed(0)}%`;
+        ctx.font = 'bold 11px sans-serif';
+        const textWidth = ctx.measureText(label).width;
+        
+        // Background for label
+        ctx.fillStyle = isVehicle ? 'rgba(0, 255, 255, 0.8)' : 'rgba(255, 0, 255, 0.5)';
+        ctx.fillRect(det.x1, det.y1 - 16, textWidth + 6, 16);
+        
+        // Text
+        ctx.fillStyle = '#000';
+        ctx.fillText(label, det.x1 + 3, det.y1 - 4);
       });
     }
 
@@ -113,29 +124,48 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       const spotDebug = debugInfo?.spotInfo?.[spot.id];
       const center = getPolygonCenter(spot.polygon);
       
-      // Draw label background
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      // Calculate label content
+      const hasDebug = showDebug && spotDebug;
       const labelText = spot.name;
-      ctx.font = 'bold 14px sans-serif';
-      const labelWidth = ctx.measureText(labelText).width;
       
-      // Calculate label height based on debug info
-      const labelHeight = showDebug && spotDebug ? 36 : 22;
+      ctx.font = 'bold 14px sans-serif';
+      const labelWidth = Math.max(
+        ctx.measureText(labelText).width,
+        hasDebug ? 80 : 0
+      );
+      
+      // Label height based on debug info
+      const labelHeight = hasDebug ? 52 : 22;
+      
+      // Draw label background
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
       ctx.fillRect(center.x - labelWidth / 2 - 6, center.y - labelHeight / 2, labelWidth + 12, labelHeight);
       
       // Draw spot name
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const nameY = showDebug && spotDebug ? center.y - 7 : center.y;
+      const nameY = hasDebug ? center.y - 15 : center.y;
       ctx.fillText(labelText, center.x, nameY);
       
-      // Draw debug ratio
-      if (showDebug && spotDebug) {
-        const ratioText = `${(spotDebug.ratio * 100).toFixed(1)}%`;
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillStyle = spotDebug.ratio >= 0.20 ? '#fbbf24' : '#9ca3af';
-        ctx.fillText(ratioText, center.x, center.y + 9);
+      // Draw debug info
+      if (hasDebug && spotDebug) {
+        // YOLO ratio
+        const yoloText = `YOLO: ${(spotDebug.yoloRatio * 100).toFixed(1)}%`;
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = spotDebug.yoloRatio >= 0.15 ? '#fbbf24' : '#9ca3af';
+        ctx.fillText(yoloText, center.x, center.y + 1);
+        
+        // Texture score
+        const textureText = `TEX: ${spotDebug.textureScore.toFixed(1)}`;
+        ctx.fillStyle = spotDebug.textureScore >= 25 ? '#fbbf24' : '#9ca3af';
+        ctx.fillText(textureText, center.x, center.y + 14);
+        
+        // Decision indicator
+        ctx.font = 'bold 9px sans-serif';
+        ctx.fillStyle = spotDebug.decision === 'YOLO' ? '#00ffff' : 
+                        spotDebug.decision === 'TEXTURE' ? '#ff9500' : '#666';
+        ctx.fillText(`[${spotDebug.decision}]`, center.x, center.y - 1 + 14 + 10);
       }
     });
 

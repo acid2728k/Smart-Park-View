@@ -14,7 +14,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_sock import Sock
 
-from detector import YOLOParkingDetector
+from detector import YOLOParkingDetector, CONFIG
 
 app = Flask(__name__)
 CORS(app)
@@ -31,7 +31,7 @@ def health():
     return jsonify({
         'status': 'ok',
         'detector': 'YOLOv8' if detector.model is not None else 'fallback',
-        'debug': detector.get_debug_info().get('config', {})
+        'config': detector.get_debug_info().get('config', {})
     })
 
 
@@ -45,14 +45,7 @@ def get_config():
 def update_config():
     """Update detector configuration."""
     data = request.json or {}
-    
-    detector.set_config(
-        threshold_occupied=data.get('threshold_occupied'),
-        threshold_free=data.get('threshold_free'),
-        history_size=data.get('history_size'),
-        debug_enabled=data.get('debug_enabled')
-    )
-    
+    detector.set_config(**data)
     return jsonify({
         'status': 'ok',
         'config': detector.get_debug_info().get('config', {})
@@ -64,42 +57,6 @@ def reset_detector():
     """Reset detector state."""
     detector.reset()
     return jsonify({'status': 'ok'})
-
-
-@app.route('/api/process-frame', methods=['POST'])
-def process_frame():
-    """Process a single frame and return occupancy status."""
-    data = request.json
-    
-    if not data or 'frame' not in data or 'spots' not in data:
-        return jsonify({'error': 'Missing frame or spots data'}), 400
-    
-    try:
-        # Decode base64 image
-        frame_data = data['frame'].split(',')[1] if ',' in data['frame'] else data['frame']
-        image_bytes = base64.b64decode(frame_data)
-        image = Image.open(BytesIO(image_bytes))
-        frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        
-        # Process spots
-        spots = data['spots']
-        occupancy_map = detector.detect_occupancy(frame, spots)
-        
-        # Get debug info
-        debug_info = detector.get_debug_info()
-        
-        return jsonify({
-            'occupancyMap': occupancy_map,
-            'debug': {
-                'detections': len(debug_info['detections']),
-                'spots': debug_info['spots']
-            }
-        })
-    except Exception as e:
-        print(f'[Server] Error processing frame: {e}')
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
 
 
 @sock.route('/ws')
@@ -129,24 +86,47 @@ def websocket(ws):
                 spots = data.get('spots', [])
                 occupancy_map = detector.detect_occupancy(frame, spots)
                 
-                # Get debug info for frontend visualization
+                # Get debug info
                 debug_info = detector.get_debug_info()
                 
-                # Prepare response with detection boxes for overlay
-                # Ensure all values are JSON serializable (convert numpy types)
+                # Prepare response (ensure JSON serializable)
                 response = {
                     'occupancyMap': {k: bool(v) for k, v in occupancy_map.items()},
                     'debug': {
-                        'vehicleBoxes': [
-                            {'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2), 'conf': float(conf)}
-                            for (x1, y1, x2, y2, conf, cls_id) in debug_info['detections']
+                        # All YOLO detections for debug overlay
+                        'allDetections': [
+                            {
+                                'x1': int(d['x1']),
+                                'y1': int(d['y1']),
+                                'x2': int(d['x2']),
+                                'y2': int(d['y2']),
+                                'conf': float(d['conf']),
+                                'cls': d['cls_name'],
+                                'isVehicle': bool(d['is_vehicle'])
+                            }
+                            for d in debug_info.get('all_detections', [])
                         ],
+                        # Vehicle detections only
+                        'vehicleBoxes': [
+                            {
+                                'x1': int(d['x1']),
+                                'y1': int(d['y1']),
+                                'x2': int(d['x2']),
+                                'y2': int(d['y2']),
+                                'conf': float(d['conf']),
+                                'cls': d['cls_name']
+                            }
+                            for d in debug_info.get('vehicle_detections', [])
+                        ],
+                        # Per-spot info
                         'spotInfo': {
                             spot_id: {
-                                'ratio': float(info['max_ratio']),
-                                'occupied': bool(info['is_occupied'])
+                                'yoloRatio': float(info.get('yolo_ratio', 0)),
+                                'textureScore': float(info.get('texture_score', 0)),
+                                'occupied': bool(info.get('is_occupied', False)),
+                                'decision': str(info.get('decision', 'UNKNOWN'))
                             }
-                            for spot_id, info in debug_info['spots'].items()
+                            for spot_id, info in debug_info.get('spots', {}).items()
                         }
                     }
                 }
@@ -154,12 +134,7 @@ def websocket(ws):
                 ws.send(json.dumps(response))
             
             elif data.get('type') == 'config':
-                # Update config via WebSocket
-                detector.set_config(
-                    threshold_occupied=data.get('threshold_occupied'),
-                    threshold_free=data.get('threshold_free'),
-                    debug_enabled=data.get('debug_enabled')
-                )
+                detector.set_config(**{k: v for k, v in data.items() if k != 'type'})
                 ws.send(json.dumps({
                     'type': 'config_updated',
                     'config': detector.get_debug_info().get('config', {})
@@ -170,7 +145,7 @@ def websocket(ws):
                 ws.send(json.dumps({'type': 'reset_done'}))
                 
         except json.JSONDecodeError as e:
-            print(f'[Server] JSON decode error: {e}')
+            print(f'[Server] JSON error: {e}')
         except Exception as e:
             print(f'[Server] WebSocket error: {e}')
             import traceback
