@@ -4,6 +4,7 @@ import { SetupScreen } from './components/SetupScreen';
 import { SidePanel } from './components/SidePanel';
 import { VideoPlayer, VideoPlayerRef } from './components/VideoPlayer';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
+import { FullscreenHUD } from './components/FullscreenHUD';
 import { useFullscreen } from './hooks/useFullscreen';
 import { saveConfig, loadConfig, clearConfig } from './utils/storage';
 import { AppMode, ParkingSpot, ParkingStats, Point, VideoSource, DebugInfo } from './types';
@@ -15,7 +16,7 @@ function App() {
   const [totalSpotCount, setTotalSpotCount] = useState(0);
   const [currentSpotIndex, setCurrentSpotIndex] = useState(0);
   const [currentPolygon, setCurrentPolygon] = useState<Point[]>([]);
-  const [isPanelHidden, setIsPanelHidden] = useState(false);
+  const [isUiHidden, setIsUiHidden] = useState(false);
   const [occupancyMap, setOccupancyMap] = useState<Record<string, boolean>>({});
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
   
@@ -24,6 +25,25 @@ function App() {
   const frameIntervalRef = useRef<number | null>(null);
   
   const { isFullscreen, toggleFullscreen } = useFullscreen();
+
+  // Exit fullscreen handler
+  const exitFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    }
+  }, []);
+
+  // Toggle UI visibility
+  const toggleUiHidden = useCallback(() => {
+    setIsUiHidden(prev => !prev);
+  }, []);
+
+  // Reset UI hidden state when exiting fullscreen
+  useEffect(() => {
+    if (!isFullscreen) {
+      setIsUiHidden(false);
+    }
+  }, [isFullscreen]);
 
   // Load saved config on mount
   useEffect(() => {
@@ -78,7 +98,6 @@ function App() {
 
     wsRef.current = connectWebSocket();
 
-    // Send frames periodically
     const sendFrame = () => {
       const video = videoPlayerRef.current?.getVideoElement();
       const canvas = videoPlayerRef.current?.getCanvasElement();
@@ -105,7 +124,7 @@ function App() {
       }));
     };
 
-    frameIntervalRef.current = window.setInterval(sendFrame, 500); // 2 FPS
+    frameIntervalRef.current = window.setInterval(sendFrame, 500);
 
     return () => {
       if (wsRef.current) {
@@ -135,14 +154,12 @@ function App() {
     let url: string = '';
     
     if (videoSource.type === 'file' && videoSource.file) {
-      // Create object URL from file
       url = URL.createObjectURL(videoSource.file);
       console.log('Created video URL from file:', url);
     } else if (videoSource.url) {
       url = videoSource.url;
       console.log('Using video URL:', url);
     } else if (videoSource.type === 'camera') {
-      // Handle camera in a separate effect
       setMode('calibration');
       setTotalSpotCount(spotCount);
       setCurrentSpotIndex(0);
@@ -201,7 +218,6 @@ function App() {
   }, []);
 
   const handleFinishCalibration = useCallback(() => {
-    // Save config
     saveConfig({
       spots,
       videoSource: videoUrl,
@@ -225,36 +241,59 @@ function App() {
     return <SetupScreen onComplete={handleSetupComplete} />;
   }
 
+  // Determine if side panel should be visible
+  const showSidePanel = mode === 'monitoring' && !isFullscreen && !isUiHidden;
+  const showTogglePanelBtn = mode === 'monitoring' && !isFullscreen && isUiHidden;
+
   return (
-    <div className={`app ${isFullscreen ? 'fullscreen' : ''}`}>
-      {mode === 'monitoring' && (
+    <div className={`app ${isFullscreen ? 'fullscreen' : ''} ${isUiHidden ? 'ui-hidden' : ''}`}>
+      {/* Side panel - only in non-fullscreen mode */}
+      {showSidePanel && (
         <SidePanel
           spots={spotsWithOccupancy}
           stats={stats}
-          isHidden={isPanelHidden}
-          onToggleHide={() => setIsPanelHidden(!isPanelHidden)}
+          isHidden={false}
+          onToggleHide={toggleUiHidden}
           onToggleFullscreen={toggleFullscreen}
           onReset={handleReset}
         />
       )}
 
       <div className="video-container">
-        {isPanelHidden && mode === 'monitoring' && (
+        {/* Toggle panel button - only when panel is hidden in non-fullscreen */}
+        {showTogglePanelBtn && (
           <button
             className="btn-icon toggle-panel-btn"
-            onClick={() => setIsPanelHidden(false)}
+            onClick={toggleUiHidden}
           >
             <Eye size={18} />
           </button>
         )}
 
+        {/* Floating controls for calibration */}
         <div className="floating-controls">
           {mode === 'calibration' && (
             <button className="btn-icon" onClick={toggleFullscreen}>
               <Maximize2 size={18} />
             </button>
           )}
+          {/* Fullscreen button in monitoring mode (non-fullscreen) */}
+          {mode === 'monitoring' && !isFullscreen && isUiHidden && (
+            <button className="btn-icon" onClick={toggleFullscreen}>
+              <Maximize2 size={18} />
+            </button>
+          )}
         </div>
+
+        {/* Fullscreen HUD - only in fullscreen mode during monitoring */}
+        {isFullscreen && mode === 'monitoring' && (
+          <FullscreenHUD
+            stats={stats}
+            isUiHidden={isUiHidden}
+            onExitFullscreen={exitFullscreen}
+            onToggleUi={toggleUiHidden}
+          />
+        )}
 
         <VideoPlayer
           ref={videoPlayerRef}
@@ -262,8 +301,8 @@ function App() {
           spots={mode === 'monitoring' ? spotsWithOccupancy : spots}
           isCalibrating={mode === 'calibration'}
           currentPolygon={currentPolygon}
-          debugInfo={mode === 'monitoring' ? debugInfo : null}
-          showDebug={mode === 'monitoring'}
+          debugInfo={mode === 'monitoring' && !isUiHidden ? debugInfo : null}
+          showDebug={mode === 'monitoring' && !isUiHidden}
           onCanvasClick={handleCanvasClick}
         />
 
