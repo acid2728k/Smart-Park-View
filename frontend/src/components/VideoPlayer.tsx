@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
 import { ParkingSpot, Point } from '../types';
 import { getPolygonCenter } from '../utils/geometry';
 
@@ -27,6 +27,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isVideoReady, setIsVideoReady] = useState(false);
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
@@ -36,18 +37,31 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
   const updateCanvasSize = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    const container = containerRef.current;
+    if (!video || !canvas || !container || !video.videoWidth) return;
 
+    // Set canvas internal size to match video resolution
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.style.width = `${video.clientWidth}px`;
-    canvas.style.height = `${video.clientHeight}px`;
+    
+    // Get the actual rendered size of the video
+    const videoRect = video.getBoundingClientRect();
+    
+    // Set canvas display size to match video element rendered size
+    canvas.style.width = `${videoRect.width}px`;
+    canvas.style.height = `${videoRect.height}px`;
+    
+    // Position canvas exactly over the video
+    canvas.style.position = 'absolute';
+    canvas.style.top = '50%';
+    canvas.style.left = '50%';
+    canvas.style.transform = 'translate(-50%, -50%)';
   }, []);
 
   const drawOverlay = useCallback(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video) return;
+    if (!canvas || !video || !canvas.width) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -71,16 +85,24 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       ctx.fill();
 
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 3;
       ctx.stroke();
 
       // Draw label
       const center = getPolygonCenter(spot.polygon);
+      
+      // Draw label background
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      const text = spot.name;
+      ctx.font = 'bold 16px sans-serif';
+      const textWidth = ctx.measureText(text).width;
+      ctx.fillRect(center.x - textWidth / 2 - 4, center.y - 10, textWidth + 8, 20);
+      
+      // Draw label text
       ctx.fillStyle = color;
-      ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(spot.name, center.x, center.y);
+      ctx.fillText(text, center.x, center.y);
     });
 
     // Draw current polygon being drawn (calibration mode)
@@ -92,82 +114,116 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       });
 
       ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 3;
+      ctx.setLineDash([8, 8]);
       ctx.stroke();
       ctx.setLineDash([]);
 
       // Draw points
-      currentPolygon.forEach((point) => {
+      currentPolygon.forEach((point, index) => {
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, 8, 0, Math.PI * 2);
         ctx.fillStyle = '#f59e0b';
         ctx.fill();
-        ctx.strokeStyle = '#000';
+        ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         ctx.stroke();
+        
+        // Draw point number
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((index + 1).toString(), point.x, point.y);
       });
     }
   }, [spots, isCalibrating, currentPolygon]);
+
+  // Handle video source change
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+
+    setIsVideoReady(false);
+    video.src = videoUrl;
+    video.load();
+  }, [videoUrl]);
 
   // Handle video loaded
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const handleLoaded = () => {
+    const handleLoadedMetadata = () => {
+      console.log('Video metadata loaded:', video.videoWidth, video.videoHeight);
+      setIsVideoReady(true);
       updateCanvasSize();
       onVideoLoaded?.(video.videoWidth, video.videoHeight);
-      video.play();
     };
 
-    video.addEventListener('loadedmetadata', handleLoaded);
-    return () => video.removeEventListener('loadedmetadata', handleLoaded);
-  }, [updateCanvasSize, onVideoLoaded]);
+    const handleCanPlay = () => {
+      console.log('Video can play');
+      video.play().catch(err => console.log('Autoplay prevented:', err));
+    };
 
-  // Redraw overlay on changes
-  useEffect(() => {
-    drawOverlay();
-  }, [drawOverlay]);
+    const handleError = (e: Event) => {
+      console.error('Video error:', e);
+    };
+
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('error', handleError);
+    
+    return () => {
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('error', handleError);
+    };
+  }, [updateCanvasSize, onVideoLoaded]);
 
   // Animation loop for continuous redraw
   useEffect(() => {
+    if (!isVideoReady) return;
+
     let animationId: number;
 
     const animate = () => {
+      updateCanvasSize();
       drawOverlay();
       animationId = requestAnimationFrame(animate);
     };
 
     animationId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationId);
-  }, [drawOverlay]);
+  }, [drawOverlay, updateCanvasSize, isVideoReady]);
 
   // Handle window resize
   useEffect(() => {
     const handleResize = () => {
       updateCanvasSize();
+      drawOverlay();
     };
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [updateCanvasSize]);
+  }, [updateCanvasSize, drawOverlay]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isCalibrating || !onCanvasClick) return;
 
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !canvas.width) return;
 
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
 
     const point: Point = {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: Math.round((e.clientX - rect.left) * scaleX),
+      y: Math.round((e.clientY - rect.top) * scaleY),
     };
 
+    console.log('Canvas click:', point);
     onCanvasClick(point);
   };
 
@@ -175,16 +231,21 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
     <div className="video-wrapper" ref={containerRef}>
       <video
         ref={videoRef}
-        src={videoUrl}
         loop
         muted
         playsInline
+        autoPlay
       />
       <canvas
         ref={canvasRef}
         className={`video-canvas ${isCalibrating ? 'calibration' : ''}`}
         onClick={handleCanvasClick}
       />
+      {!isVideoReady && videoUrl && (
+        <div className="video-loading">
+          Загрузка видео...
+        </div>
+      )}
     </div>
   );
 });

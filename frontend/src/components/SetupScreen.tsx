@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Car } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Car, Upload } from 'lucide-react';
 import { VideoSource } from '../types';
 
 interface SetupScreenProps {
@@ -11,7 +11,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [streamUrl, setStreamUrl] = useState('');
   const [spotCount, setSpotCount] = useState(6);
-  const [useDefaultVideo, setUseDefaultVideo] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,9 +19,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
     let videoSource: VideoSource;
     
     if (sourceType === 'file') {
-      if (useDefaultVideo) {
-        videoSource = { type: 'file', url: '/1087118309-test.mp4' };
-      } else if (videoFile) {
+      if (videoFile) {
         videoSource = { type: 'file', file: videoFile };
       } else {
         return;
@@ -36,9 +34,20 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
     onComplete(videoSource, spotCount);
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setVideoFile(file);
+    }
+  };
+
+  const handleFileButtonClick = () => {
+    fileInputRef.current?.click();
+  };
+
   const isValid = () => {
     if (spotCount < 1) return false;
-    if (sourceType === 'file' && !useDefaultVideo && !videoFile) return false;
+    if (sourceType === 'file' && !videoFile) return false;
     if (sourceType === 'stream' && !streamUrl) return false;
     return true;
   };
@@ -57,7 +66,10 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
           <label>Источник видео</label>
           <select
             value={sourceType}
-            onChange={(e) => setSourceType(e.target.value as 'file' | 'camera' | 'stream')}
+            onChange={(e) => {
+              setSourceType(e.target.value as 'file' | 'camera' | 'stream');
+              setVideoFile(null);
+            }}
           >
             <option value="file">Видеофайл</option>
             <option value="camera">Веб-камера</option>
@@ -66,30 +78,29 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
         </div>
 
         {sourceType === 'file' && (
-          <>
-            <div className="setup-field">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={useDefaultVideo}
-                  onChange={(e) => setUseDefaultVideo(e.target.checked)}
-                  style={{ width: 'auto' }}
-                />
-                <span>Использовать тестовое видео (1087118309-test.mp4)</span>
-              </label>
-            </div>
-            
-            {!useDefaultVideo && (
-              <div className="setup-field">
-                <label>Выберите видеофайл</label>
-                <input
-                  type="file"
-                  accept="video/*"
-                  onChange={(e) => setVideoFile(e.target.files?.[0] || null)}
-                />
-              </div>
+          <div className="setup-field">
+            <label>Выберите видеофайл</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="file-select-btn"
+              onClick={handleFileButtonClick}
+            >
+              <Upload size={18} />
+              {videoFile ? videoFile.name : 'Выбрать файл...'}
+            </button>
+            {videoFile && (
+              <p className="file-info">
+                Размер: {(videoFile.size / (1024 * 1024)).toFixed(2)} МБ
+              </p>
             )}
-          </>
+          </div>
         )}
 
         {sourceType === 'stream' && (
@@ -101,6 +112,14 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
               value={streamUrl}
               onChange={(e) => setStreamUrl(e.target.value)}
             />
+          </div>
+        )}
+
+        {sourceType === 'camera' && (
+          <div className="setup-field">
+            <p className="camera-info">
+              После нажатия "Начать калибровку" браузер запросит доступ к камере.
+            </p>
           </div>
         )}
 

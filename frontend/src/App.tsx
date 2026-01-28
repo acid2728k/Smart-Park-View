@@ -128,28 +128,38 @@ function App() {
   };
 
   const handleSetupComplete = useCallback((videoSource: VideoSource, spotCount: number) => {
-    let url: string;
+    let url: string = '';
     
     if (videoSource.type === 'file' && videoSource.file) {
+      // Create object URL from file
       url = URL.createObjectURL(videoSource.file);
+      console.log('Created video URL from file:', url);
     } else if (videoSource.url) {
       url = videoSource.url;
+      console.log('Using video URL:', url);
     } else if (videoSource.type === 'camera') {
-      // TODO: Implement camera access
+      // Handle camera in a separate effect
+      setMode('calibration');
+      setTotalSpotCount(spotCount);
+      setCurrentSpotIndex(0);
+      setSpots([]);
+      setCurrentPolygon([]);
+      
       navigator.mediaDevices.getUserMedia({ video: true })
         .then(stream => {
           const video = videoPlayerRef.current?.getVideoElement();
           if (video) {
             video.srcObject = stream;
+            video.play();
           }
         })
         .catch(err => console.error('Camera access denied:', err));
-      url = '';
-    } else {
-      url = '/1087118309-test.mp4';
+      return;
     }
 
-    setVideoUrl(url);
+    if (url) {
+      setVideoUrl(url);
+    }
     setTotalSpotCount(spotCount);
     setCurrentSpotIndex(0);
     setSpots([]);
