@@ -168,15 +168,18 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
         ctx.fillStyle = yoloTriggered ? '#00ff00' : '#888';
         ctx.fillText(`YOLO: ${(spotDebug.yoloRatio * 100).toFixed(1)}%`, center.x, center.y - 5);
         
-        // Texture score
-        const texThreshold = spotDebug.thresholds?.texture_occupied ?? 18;
-        const texTriggered = spotDebug.textureScore >= texThreshold;
-        ctx.fillStyle = texTriggered ? '#00ff00' : '#888';
-        ctx.fillText(`TEX: ${spotDebug.textureScore.toFixed(1)}`, center.x, center.y + 8);
+        // Edge metrics (edge_density / intensity_std)
+        const edgeThreshold = spotDebug.thresholds?.edge_density_occupied ?? 4.5;
+        const edgeDensity = spotDebug.edgeDensity ?? 0;
+        const intensityStd = spotDebug.intensityStd ?? 0;
+        const edgeTriggered = edgeDensity >= edgeThreshold || intensityStd >= 25;
+        ctx.fillStyle = edgeTriggered ? '#00ff00' : '#888';
+        ctx.fillText(`EDGE: ${edgeDensity.toFixed(1)} / ${intensityStd.toFixed(0)}`, center.x, center.y + 8);
         
         // Decision
         const decisionColor = spotDebug.decision === 'YOLO' ? '#00ffff' : 
-                            spotDebug.decision === 'TEXTURE' ? '#ff9500' : '#666';
+                            spotDebug.decision?.includes('EDGE') ? '#ff9500' :
+                            spotDebug.decision?.includes('DIFF') ? '#9500ff' : '#666';
         ctx.fillStyle = decisionColor;
         ctx.font = 'bold 9px monospace';
         ctx.fillText(`[${spotDebug.decision}]`, center.x, center.y + 22);
@@ -308,7 +311,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
         onClick={handleCanvasClick}
       />
       {!isVideoReady && videoUrl && (
-        <div className="video-loading">Загрузка видео...</div>
+        <div className="video-loading">Loading video...</div>
       )}
     </div>
   );

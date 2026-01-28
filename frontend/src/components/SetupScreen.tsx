@@ -60,10 +60,10 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       </div>
 
       <form className="setup-card" onSubmit={handleSubmit}>
-        <h2>Настройка парковки</h2>
+        <h2>Parking Setup</h2>
 
         <div className="setup-field">
-          <label>Источник видео</label>
+          <label>Video Source</label>
           <select
             value={sourceType}
             onChange={(e) => {
@@ -71,15 +71,15 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
               setVideoFile(null);
             }}
           >
-            <option value="file">Видеофайл</option>
-            <option value="camera">Веб-камера</option>
-            <option value="stream">IP-поток (RTSP/HTTP)</option>
+            <option value="file">Video File</option>
+            <option value="camera">Webcam</option>
+            <option value="stream">IP Stream (RTSP/HTTP)</option>
           </select>
         </div>
 
         {sourceType === 'file' && (
           <div className="setup-field">
-            <label>Выберите видеофайл</label>
+            <label>Select Video File</label>
             <input
               ref={fileInputRef}
               type="file"
@@ -93,11 +93,11 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
               onClick={handleFileButtonClick}
             >
               <Upload size={18} />
-              {videoFile ? videoFile.name : 'Выбрать файл...'}
+              {videoFile ? videoFile.name : 'Choose file...'}
             </button>
             {videoFile && (
               <p className="file-info">
-                Размер: {(videoFile.size / (1024 * 1024)).toFixed(2)} МБ
+                Size: {(videoFile.size / (1024 * 1024)).toFixed(2)} MB
               </p>
             )}
           </div>
@@ -105,10 +105,10 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
 
         {sourceType === 'stream' && (
           <div className="setup-field">
-            <label>URL потока</label>
+            <label>Stream URL</label>
             <input
               type="text"
-              placeholder="rtsp://... или http://..."
+              placeholder="rtsp://... or http://..."
               value={streamUrl}
               onChange={(e) => setStreamUrl(e.target.value)}
             />
@@ -118,13 +118,13 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
         {sourceType === 'camera' && (
           <div className="setup-field">
             <p className="camera-info">
-              После нажатия "Начать калибровку" браузер запросит доступ к камере.
+              After clicking "Start Calibration", the browser will request camera access.
             </p>
           </div>
         )}
 
         <div className="setup-field">
-          <label>Количество парковочных мест</label>
+          <label>Number of Parking Spots</label>
           <input
             type="number"
             min="1"
@@ -139,7 +139,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
           className="btn btn-primary btn-full"
           disabled={!isValid()}
         >
-          Начать калибровку
+          Start Calibration
         </button>
       </form>
     </div>

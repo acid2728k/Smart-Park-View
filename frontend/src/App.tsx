@@ -198,7 +198,7 @@ function App() {
 
     const newSpot: ParkingSpot = {
       id: `spot-${currentSpotIndex + 1}`,
-      name: `Место ${currentSpotIndex + 1}`,
+      name: `Spot ${currentSpotIndex + 1}`,
       polygon: [...currentPolygon],
       isOccupied: false,
     };
@@ -243,11 +243,23 @@ function App() {
 
   // Determine if side panel should be visible
   const showSidePanel = mode === 'monitoring' && !isFullscreen && !isUiHidden;
-  const showTogglePanelBtn = mode === 'monitoring' && !isFullscreen && isUiHidden;
+  // Show floating toggle button in monitoring mode (non-fullscreen) when UI is hidden
+  const showFloatingToggle = mode === 'monitoring' && !isFullscreen && isUiHidden;
 
   return (
     <div className={`app ${isFullscreen ? 'fullscreen' : ''} ${isUiHidden ? 'ui-hidden' : ''}`}>
-      {/* Side panel - only in non-fullscreen mode */}
+      {/* Persistent floating toggle button - always accessible when UI is hidden */}
+      {showFloatingToggle && (
+        <button
+          className="floating-toggle-btn"
+          onClick={toggleUiHidden}
+          title="Show UI"
+        >
+          <Eye size={20} />
+        </button>
+      )}
+
+      {/* Side panel - only in non-fullscreen mode when UI visible */}
       {showSidePanel && (
         <SidePanel
           spots={spotsWithOccupancy}
@@ -260,16 +272,6 @@ function App() {
       )}
 
       <div className="video-container">
-        {/* Toggle panel button - only when panel is hidden in non-fullscreen */}
-        {showTogglePanelBtn && (
-          <button
-            className="btn-icon toggle-panel-btn"
-            onClick={toggleUiHidden}
-          >
-            <Eye size={18} />
-          </button>
-        )}
-
         {/* Floating controls for calibration */}
         <div className="floating-controls">
           {mode === 'calibration' && (
@@ -277,8 +279,8 @@ function App() {
               <Maximize2 size={18} />
             </button>
           )}
-          {/* Fullscreen button in monitoring mode (non-fullscreen) */}
-          {mode === 'monitoring' && !isFullscreen && isUiHidden && (
+          {/* Fullscreen button in monitoring mode (non-fullscreen) when UI hidden */}
+          {showFloatingToggle && (
             <button className="btn-icon" onClick={toggleFullscreen}>
               <Maximize2 size={18} />
             </button>
@@ -289,9 +291,7 @@ function App() {
         {isFullscreen && mode === 'monitoring' && (
           <FullscreenHUD
             stats={stats}
-            isUiHidden={isUiHidden}
             onExitFullscreen={exitFullscreen}
-            onToggleUi={toggleUiHidden}
           />
         )}
 
@@ -301,8 +301,8 @@ function App() {
           spots={mode === 'monitoring' ? spotsWithOccupancy : spots}
           isCalibrating={mode === 'calibration'}
           currentPolygon={currentPolygon}
-          debugInfo={mode === 'monitoring' && !isUiHidden ? debugInfo : null}
-          showDebug={mode === 'monitoring' && !isUiHidden}
+          debugInfo={mode === 'monitoring' ? debugInfo : null}
+          showDebug={mode === 'monitoring'}
           onCanvasClick={handleCanvasClick}
         />
 

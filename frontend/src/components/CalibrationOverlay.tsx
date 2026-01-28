@@ -28,21 +28,21 @@ export function CalibrationOverlay({
       <div className="calibration-info">
         {isLastSpot ? (
           <>
-            <h3>Калибровка завершена!</h3>
-            <p>Все {totalSpots} парковочных мест настроены.</p>
+            <h3>Calibration Complete!</h3>
+            <p>All {totalSpots} parking spots have been configured.</p>
             <div className="calibration-actions">
               <button className="btn btn-primary" onClick={onFinishCalibration}>
                 <Check size={18} />
-                Начать мониторинг
+                Start Monitoring
               </button>
             </div>
           </>
         ) : (
           <>
-            <h3>Нарисуйте область для места №{currentSpotIndex + 1}</h3>
+            <h3>Draw area for Spot #{currentSpotIndex + 1}</h3>
             <p>
-              Кликните по углам парковочного места, чтобы обозначить его границы.
-              Минимум 3 точки. Нарисовано точек: {pointsDrawn}
+              Click on the corners of the parking spot to define its boundaries.
+              Minimum 3 points. Points drawn: {pointsDrawn}
             </p>
             <div className="calibration-actions">
               <button
@@ -51,14 +51,14 @@ export function CalibrationOverlay({
                 disabled={pointsDrawn === 0}
               >
                 <RotateCcw size={18} />
-                Отменить точку
+                Undo Point
               </button>
               <button
                 className="btn btn-secondary"
                 onClick={onSkipSpot}
               >
                 <X size={18} />
-                Пропустить
+                Skip
               </button>
               <button
                 className="btn btn-primary"
@@ -66,11 +66,11 @@ export function CalibrationOverlay({
                 disabled={!canConfirm}
               >
                 <Check size={18} />
-                Подтвердить место
+                Confirm Spot
               </button>
             </div>
             <p style={{ marginTop: '12px', fontSize: '12px', opacity: 0.7 }}>
-              Место {currentSpotIndex + 1} из {totalSpots}
+              Spot {currentSpotIndex + 1} of {totalSpots}
             </p>
           </>
         )}

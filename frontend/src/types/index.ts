@@ -44,25 +44,31 @@ export interface Detection {
 
 export interface SpotDebugInfo {
   yoloRatio: number;
-  textureScore: number;
+  edgeDensity: number;
+  intensityStd: number;
+  diffMean: number;
+  changedRatio: number;
   occupied: boolean;
   decision: string;
+  baselineValid?: boolean;
+  baselineAge?: number;
+  consecutiveFree?: number;
   bestDet?: {
     cls: string | null;
     conf: number;
     bbox: number[] | null;
   };
-  polyBounds?: number[];
   thresholds?: {
     yolo_occupied: number;
-    yolo_free: number;
-    texture_occupied: number;
-    texture_free: number;
+    edge_density_occupied: number;
+    intensity_std_occupied: number;
+    diff_mean_occupied: number;
   };
 }
 
 export interface DebugInfo {
   frameSize?: number[];
+  frameNumber?: number;
   allDetections?: Detection[];
   vehicleBoxes?: Detection[];
   spotInfo: Record<string, SpotDebugInfo>;

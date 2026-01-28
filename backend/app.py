@@ -121,11 +121,16 @@ def websocket(ws):
                         'spotInfo': {
                             spot_id: safe_json({
                                 'yoloRatio': info.get('yolo_ratio', 0),
-                                'textureScore': info.get('texture_score', 0),
+                                'edgeDensity': info.get('edge_density', 0),
+                                'intensityStd': info.get('intensity_std', 0),
+                                'diffMean': info.get('diff_mean', 0),
+                                'changedRatio': info.get('changed_ratio', 0),
                                 'occupied': info.get('is_occupied', False),
                                 'decision': info.get('decision', 'UNKNOWN'),
+                                'baselineValid': info.get('baseline_valid', False),
+                                'baselineAge': info.get('baseline_age', -1),
+                                'consecutiveFree': info.get('consecutive_free', 0),
                                 'bestDet': info.get('best_det', {}),
-                                'polyBounds': info.get('poly_bounds', []),
                                 'thresholds': info.get('thresholds', {})
                             })
                             for spot_id, info in debug_info.get('spots', {}).items()

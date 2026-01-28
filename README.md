@@ -1,111 +1,110 @@
 # Smart Park View
 
-Минималистичное веб-приложение для отслеживания занятых и свободных парковочных мест с использованием видео с топвью (вид сверху).
+A minimalist web application for tracking occupied and free parking spots using top-view video surveillance.
 
-## Возможности
+## Features
 
-- Поддержка видеофайлов, веб-камеры и IP-потоков
-- Интерактивная калибровка парковочных мест (рисование полигонов)
-- Определение занятости в реальном времени с использованием OpenCV
-- Минималистичный UI с темной темой (черный + зеленый акцент)
-- Сохранение конфигурации в localStorage
+- Support for video files, webcam, and IP streams (RTSP/HTTP)
+- Interactive parking spot calibration (polygon drawing)
+- Real-time occupancy detection using computer vision
+- YOLOv8 vehicle detection + edge-based fallback
+- Minimalist dark theme UI (black + green accent)
+- Configuration persistence via localStorage
+- Fullscreen mode with compact HUD
 
-## Технологии
+## Technologies
 
 **Frontend:**
 - React 18 + TypeScript
 - Vite
-- Lucide React (иконки)
-- HTML5 Video + Canvas
+- Lucide React (icons)
+- HTML5 Video + Canvas API
 
 **Backend:**
 - Python 3.10+
-- Flask + Flask-CORS + Flask-Sock
-- OpenCV для обработки видео
-- Опционально: YOLOv8 для улучшенной детекции
+- Flask + Flask-CORS + Flask-Sock (WebSocket)
+- OpenCV for image processing
+- YOLOv8 (ultralytics) for vehicle detection
 
-## Установка и запуск
+## Installation & Setup
 
 ### 1. Backend
 
 ```bash
 cd backend
 
-# Создать виртуальное окружение
+# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
-# или
+# or
 venv\Scripts\activate  # Windows
 
-# Установить зависимости
+# Install dependencies
 pip install -r requirements.txt
 
-# Запустить сервер
+# Start server
 python app.py
 ```
 
-Backend будет доступен на `http://localhost:5001`
+Backend will be available at `http://localhost:5001`
 
 ### 2. Frontend
 
 ```bash
 cd frontend
 
-# Установить зависимости
+# Install dependencies
 npm install
 
-# Запустить dev-сервер
+# Start dev server
 npm run dev
 ```
 
-Frontend будет доступен на `http://localhost:3000`
+Frontend will be available at `http://localhost:3000`
 
-### 3. Тестовое видео
-
-Положите тестовый видеофайл `1087118309-test.mp4` в папку `frontend/public/`
-
-## Использование
-
-1. Откройте `http://localhost:3000` в браузере
-2. Выберите источник видео (файл, камера или поток)
-3. Укажите количество парковочных мест
-4. Нажмите "Начать калибровку"
-5. Для каждого места нарисуйте полигон, кликая по углам
-6. После калибровки начнется мониторинг в реальном времени
-
-## Алгоритм детекции
-
-Базовый детектор использует комбинацию методов:
-
-1. **Edge Detection (Canny)** — анализ плотности границ в области
-2. **Intensity Variance** — анализ текстуры (автомобили имеют более высокую вариацию)
-3. **Background Subtraction** — выделение движущихся/новых объектов
-
-Для более точной детекции можно использовать YOLO:
+### 3. Quick Start (Both Servers)
 
 ```bash
-pip install ultralytics
+./start.sh
 ```
 
-И изменить в `detector.py` использование `YOLOParkingDetector` вместо `ParkingDetector`.
+## Usage
 
-## Структура проекта
+1. Open `http://localhost:3000` in your browser
+2. Select video source (file, webcam, or stream)
+3. Enter the number of parking spots
+4. Click "Start Calibration"
+5. For each spot, draw a polygon by clicking on corners
+6. After calibration, real-time monitoring begins automatically
+
+## Detection Algorithm
+
+The detector uses a multi-layer approach:
+
+1. **YOLOv8 Detection** — Primary vehicle detection using neural network
+2. **Edge-based Fallback** — Detects vehicles by analyzing edge density and intensity variance (works well for top-view)
+3. **Diff-based Detection** — Compares current frame to baseline (when spot was empty)
+4. **Temporal Smoothing** — Reduces flickering with majority voting over multiple frames
+5. **Hysteresis** — Different thresholds for becoming occupied vs becoming free
+
+## Project Structure
 
 ```
 smart-park-view/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── SetupScreen.tsx      # Экран настройки
-│   │   │   ├── SidePanel.tsx        # Боковая панель статистики
-│   │   │   ├── VideoPlayer.tsx      # Видеоплеер с canvas overlay
-│   │   │   └── CalibrationOverlay.tsx
+│   │   │   ├── SetupScreen.tsx       # Setup screen
+│   │   │   ├── SidePanel.tsx         # Statistics side panel
+│   │   │   ├── VideoPlayer.tsx       # Video player with canvas overlay
+│   │   │   ├── CalibrationOverlay.tsx # Calibration UI
+│   │   │   └── FullscreenHUD.tsx     # Fullscreen statistics HUD
 │   │   ├── hooks/
 │   │   │   ├── useFullscreen.ts
 │   │   │   └── useVideoProcessor.ts
 │   │   ├── utils/
-│   │   │   ├── storage.ts           # LocalStorage
-│   │   │   └── geometry.ts          # Геометрические утилиты
+│   │   │   ├── storage.ts            # LocalStorage utilities
+│   │   │   └── geometry.ts           # Geometry utilities
 │   │   ├── types/
 │   │   │   └── index.ts
 │   │   ├── styles/
@@ -113,11 +112,11 @@ smart-park-view/
 │   │   ├── App.tsx
 │   │   └── main.tsx
 │   └── public/
-│       └── 1087118309-test.mp4      # Тестовое видео
 ├── backend/
-│   ├── app.py                       # Flask сервер
-│   ├── detector.py                  # Детектор занятости
+│   ├── app.py                        # Flask server
+│   ├── detector.py                   # Occupancy detector
 │   └── requirements.txt
+├── start.sh                          # Quick start script
 └── README.md
 ```
 
@@ -125,7 +124,7 @@ smart-park-view/
 
 ### WebSocket `/ws`
 
-Отправка кадра:
+Send frame for processing:
 ```json
 {
   "type": "frame",
@@ -139,16 +138,38 @@ smart-park-view/
 }
 ```
 
-Ответ:
+Response:
 ```json
 {
   "occupancyMap": {
     "spot-1": true,
     "spot-2": false
+  },
+  "debug": {
+    "frameSize": [1920, 1080],
+    "allDetections": [...],
+    "spotInfo": {...}
   }
 }
 ```
 
-## Лицензия
+### REST Endpoints
+
+- `GET /api/health` — Server health check
+- `POST /api/config` — Update detector configuration
+- `POST /api/reset` — Reset detector state
+
+## Configuration
+
+Key detector parameters (can be adjusted in `detector.py`):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `confidence_threshold` | 0.15 | YOLO confidence threshold |
+| `yolo_threshold_occupied` | 0.12 | Min overlap ratio for occupied |
+| `edge_density_threshold_occupied` | 4.5 | Edge density % for occupied |
+| `intensity_std_threshold_occupied` | 25.0 | Intensity std for occupied |
+
+## License
 
 MIT
