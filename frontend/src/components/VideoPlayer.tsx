@@ -41,21 +41,16 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
   const updateCanvasSize = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!video || !canvas || !container || !video.videoWidth) return;
+    if (!video || !canvas || !video.videoWidth) return;
 
-    // Set canvas internal size to match video resolution
+    // Canvas internal size = video native resolution
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
-    // Get the actual rendered size of the video
+    // Canvas display size = video rendered size
     const videoRect = video.getBoundingClientRect();
-    
-    // Set canvas display size to match video element rendered size
     canvas.style.width = `${videoRect.width}px`;
     canvas.style.height = `${videoRect.height}px`;
-    
-    // Position canvas exactly over the video
     canvas.style.position = 'absolute';
     canvas.style.top = '50%';
     canvas.style.left = '50%';
@@ -72,30 +67,39 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw ALL detections (debug mode)
+    // Draw ALL detections (debug)
     if (showDebug && debugInfo?.allDetections) {
       debugInfo.allDetections.forEach((det) => {
         const isVehicle = det.isVehicle;
-        const color = isVehicle ? '#00ffff' : '#ff00ff80';
+        const isIgnored = det.isIgnored;
+        
+        // Color coding: cyan=vehicle, magenta=other, gray=ignored
+        let color = '#ff00ff';
+        let lineWidth = 1;
+        if (isVehicle) {
+          color = '#00ffff';
+          lineWidth = 2;
+        }
+        if (isIgnored) {
+          color = '#666666';
+        }
         
         ctx.strokeStyle = color;
-        ctx.lineWidth = isVehicle ? 2 : 1;
-        ctx.setLineDash(isVehicle ? [] : [4, 4]);
+        ctx.lineWidth = lineWidth;
+        ctx.setLineDash(isVehicle ? [] : [3, 3]);
         ctx.strokeRect(det.x1, det.y1, det.x2 - det.x1, det.y2 - det.y1);
         ctx.setLineDash([]);
         
-        // Label
+        // Label background
         const label = `${det.cls} ${(det.conf * 100).toFixed(0)}%`;
-        ctx.font = 'bold 11px sans-serif';
+        ctx.font = 'bold 11px monospace';
         const textWidth = ctx.measureText(label).width;
         
-        // Background for label
-        ctx.fillStyle = isVehicle ? 'rgba(0, 255, 255, 0.8)' : 'rgba(255, 0, 255, 0.5)';
-        ctx.fillRect(det.x1, det.y1 - 16, textWidth + 6, 16);
+        ctx.fillStyle = color + 'cc';
+        ctx.fillRect(det.x1, det.y1 - 15, textWidth + 6, 15);
         
-        // Text
         ctx.fillStyle = '#000';
-        ctx.fillText(label, det.x1 + 3, det.y1 - 4);
+        ctx.fillText(label, det.x1 + 3, det.y1 - 3);
       });
     }
 
@@ -104,8 +108,9 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       if (spot.polygon.length < 3) return;
 
       const color = spot.isOccupied ? '#ef4444' : '#22c55e';
+      const spotDebug = debugInfo?.spotInfo?.[spot.id];
       
-      // Draw polygon fill
+      // Draw polygon
       ctx.beginPath();
       ctx.moveTo(spot.polygon[0].x, spot.polygon[0].y);
       spot.polygon.forEach((point, i) => {
@@ -113,63 +118,72 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       });
       ctx.closePath();
 
-      ctx.fillStyle = `${color}33`;
+      ctx.fillStyle = `${color}40`;
       ctx.fill();
-
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // Get debug info for this spot
-      const spotDebug = debugInfo?.spotInfo?.[spot.id];
+      // Draw best detection bbox if exists (for debugging coordinate alignment)
+      if (showDebug && spotDebug?.bestDet?.bbox) {
+        const [bx1, by1, bx2, by2] = spotDebug.bestDet.bbox;
+        ctx.strokeStyle = '#ffff00';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.strokeRect(bx1, by1, bx2 - bx1, by2 - by1);
+        ctx.setLineDash([]);
+      }
+
+      // Label
       const center = getPolygonCenter(spot.polygon);
-      
-      // Calculate label content
       const hasDebug = showDebug && spotDebug;
-      const labelText = spot.name;
       
-      ctx.font = 'bold 14px sans-serif';
-      const labelWidth = Math.max(
-        ctx.measureText(labelText).width,
-        hasDebug ? 80 : 0
-      );
+      ctx.font = 'bold 13px sans-serif';
+      const labelWidth = Math.max(90, ctx.measureText(spot.name).width + 12);
+      const labelHeight = hasDebug ? 62 : 24;
       
-      // Label height based on debug info
-      const labelHeight = hasDebug ? 52 : 22;
+      // Label background
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+      ctx.fillRect(center.x - labelWidth / 2, center.y - labelHeight / 2, labelWidth, labelHeight);
       
-      // Draw label background
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.fillRect(center.x - labelWidth / 2 - 6, center.y - labelHeight / 2, labelWidth + 12, labelHeight);
+      // Border
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(center.x - labelWidth / 2, center.y - labelHeight / 2, labelWidth, labelHeight);
       
-      // Draw spot name
+      // Spot name
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const nameY = hasDebug ? center.y - 15 : center.y;
-      ctx.fillText(labelText, center.x, nameY);
+      const nameY = hasDebug ? center.y - 20 : center.y;
+      ctx.fillText(spot.name, center.x, nameY);
       
-      // Draw debug info
+      // Debug info
       if (hasDebug && spotDebug) {
+        ctx.font = 'bold 10px monospace';
+        
         // YOLO ratio
-        const yoloText = `YOLO: ${(spotDebug.yoloRatio * 100).toFixed(1)}%`;
-        ctx.font = 'bold 10px sans-serif';
-        ctx.fillStyle = spotDebug.yoloRatio >= 0.15 ? '#fbbf24' : '#9ca3af';
-        ctx.fillText(yoloText, center.x, center.y + 1);
+        const yoloThreshold = spotDebug.thresholds?.yolo_occupied ?? 0.12;
+        const yoloTriggered = spotDebug.yoloRatio >= yoloThreshold;
+        ctx.fillStyle = yoloTriggered ? '#00ff00' : '#888';
+        ctx.fillText(`YOLO: ${(spotDebug.yoloRatio * 100).toFixed(1)}%`, center.x, center.y - 5);
         
         // Texture score
-        const textureText = `TEX: ${spotDebug.textureScore.toFixed(1)}`;
-        ctx.fillStyle = spotDebug.textureScore >= 25 ? '#fbbf24' : '#9ca3af';
-        ctx.fillText(textureText, center.x, center.y + 14);
+        const texThreshold = spotDebug.thresholds?.texture_occupied ?? 18;
+        const texTriggered = spotDebug.textureScore >= texThreshold;
+        ctx.fillStyle = texTriggered ? '#00ff00' : '#888';
+        ctx.fillText(`TEX: ${spotDebug.textureScore.toFixed(1)}`, center.x, center.y + 8);
         
-        // Decision indicator
-        ctx.font = 'bold 9px sans-serif';
-        ctx.fillStyle = spotDebug.decision === 'YOLO' ? '#00ffff' : 
-                        spotDebug.decision === 'TEXTURE' ? '#ff9500' : '#666';
-        ctx.fillText(`[${spotDebug.decision}]`, center.x, center.y - 1 + 14 + 10);
+        // Decision
+        const decisionColor = spotDebug.decision === 'YOLO' ? '#00ffff' : 
+                            spotDebug.decision === 'TEXTURE' ? '#ff9500' : '#666';
+        ctx.fillStyle = decisionColor;
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`[${spotDebug.decision}]`, center.x, center.y + 22);
       }
     });
 
-    // Draw current polygon being drawn (calibration mode)
+    // Draw current polygon (calibration)
     if (isCalibrating && currentPolygon.length > 0) {
       ctx.beginPath();
       ctx.moveTo(currentPolygon[0].x, currentPolygon[0].y);
@@ -183,7 +197,6 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw points
       currentPolygon.forEach((point, index) => {
         ctx.beginPath();
         ctx.arc(point.x, point.y, 8, 0, Math.PI * 2);
@@ -193,7 +206,6 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
         ctx.lineWidth = 2;
         ctx.stroke();
         
-        // Draw point number
         ctx.fillStyle = '#000';
         ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'center';
@@ -201,73 +213,68 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
         ctx.fillText((index + 1).toString(), point.x, point.y);
       });
     }
+    
+    // Draw frame info (debug)
+    if (showDebug && debugInfo?.frameSize) {
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(5, 5, 180, 20);
+      ctx.fillStyle = '#0f0';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Frame: ${debugInfo.frameSize[0]}x${debugInfo.frameSize[1]}`, 10, 18);
+    }
   }, [spots, isCalibrating, currentPolygon, debugInfo, showDebug]);
 
-  // Handle video source change
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoUrl) return;
-
     setIsVideoReady(false);
     video.src = videoUrl;
     video.load();
   }, [videoUrl]);
 
-  // Handle video loaded
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const handleLoadedMetadata = () => {
-      console.log('Video metadata loaded:', video.videoWidth, video.videoHeight);
+      console.log('Video loaded:', video.videoWidth, video.videoHeight);
       setIsVideoReady(true);
       updateCanvasSize();
       onVideoLoaded?.(video.videoWidth, video.videoHeight);
     };
 
     const handleCanPlay = () => {
-      console.log('Video can play');
-      video.play().catch(err => console.log('Autoplay prevented:', err));
-    };
-
-    const handleError = (e: Event) => {
-      console.error('Video error:', e);
+      video.play().catch(err => console.log('Autoplay blocked:', err));
     };
 
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
     video.addEventListener('canplay', handleCanPlay);
-    video.addEventListener('error', handleError);
     
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('canplay', handleCanPlay);
-      video.removeEventListener('error', handleError);
     };
   }, [updateCanvasSize, onVideoLoaded]);
 
-  // Animation loop for continuous redraw
   useEffect(() => {
     if (!isVideoReady) return;
 
     let animationId: number;
-
     const animate = () => {
       updateCanvasSize();
       drawOverlay();
       animationId = requestAnimationFrame(animate);
     };
-
     animationId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationId);
   }, [drawOverlay, updateCanvasSize, isVideoReady]);
 
-  // Handle window resize
   useEffect(() => {
     const handleResize = () => {
       updateCanvasSize();
       drawOverlay();
     };
-
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [updateCanvasSize, drawOverlay]);
@@ -278,6 +285,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
     const canvas = canvasRef.current;
     if (!canvas || !canvas.width) return;
 
+    // Convert client coords to canvas (video) coords
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -287,28 +295,20 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(({
       y: Math.round((e.clientY - rect.top) * scaleY),
     };
 
-    console.log('Canvas click:', point);
+    console.log('Click -> video coords:', point, 'canvas:', canvas.width, 'x', canvas.height);
     onCanvasClick(point);
   };
 
   return (
     <div className="video-wrapper" ref={containerRef}>
-      <video
-        ref={videoRef}
-        loop
-        muted
-        playsInline
-        autoPlay
-      />
+      <video ref={videoRef} loop muted playsInline autoPlay />
       <canvas
         ref={canvasRef}
         className={`video-canvas ${isCalibrating ? 'calibration' : ''}`}
         onClick={handleCanvasClick}
       />
       {!isVideoReady && videoUrl && (
-        <div className="video-loading">
-          Загрузка видео...
-        </div>
+        <div className="video-loading">Загрузка видео...</div>
       )}
     </div>
   );

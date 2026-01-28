@@ -1,7 +1,5 @@
 """
 Smart Park View - Backend Server
-
-Flask server with WebSocket support for real-time parking occupancy detection.
 """
 
 import json
@@ -14,55 +12,58 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_sock import Sock
 
-from detector import YOLOParkingDetector, CONFIG
+from detector import YOLOParkingDetector
 
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
 
-# Initialize detector
-print('[Server] Initializing parking detector...')
+print('[Server] Initializing detector...')
 detector = YOLOParkingDetector()
 
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    """Health check endpoint."""
     return jsonify({
         'status': 'ok',
-        'detector': 'YOLOv8' if detector.model is not None else 'fallback',
+        'detector': 'YOLOv8' if detector.model else 'fallback',
         'config': detector.get_debug_info().get('config', {})
     })
-
-
-@app.route('/api/config', methods=['GET'])
-def get_config():
-    """Get current detector configuration."""
-    return jsonify(detector.get_debug_info().get('config', {}))
 
 
 @app.route('/api/config', methods=['POST'])
 def update_config():
-    """Update detector configuration."""
     data = request.json or {}
     detector.set_config(**data)
-    return jsonify({
-        'status': 'ok',
-        'config': detector.get_debug_info().get('config', {})
-    })
+    return jsonify({'status': 'ok', 'config': detector.get_debug_info().get('config', {})})
 
 
 @app.route('/api/reset', methods=['POST'])
 def reset_detector():
-    """Reset detector state."""
     detector.reset()
     return jsonify({'status': 'ok'})
 
 
+def safe_json(obj):
+    """Convert numpy types to JSON-serializable Python types."""
+    if isinstance(obj, dict):
+        return {k: safe_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [safe_json(v) for v in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    return obj
+
+
 @sock.route('/ws')
 def websocket(ws):
-    """WebSocket endpoint for real-time frame processing."""
-    print('[Server] WebSocket client connected')
+    print('[Server] WebSocket connected')
     
     while True:
         try:
@@ -73,7 +74,6 @@ def websocket(ws):
             data = json.loads(message)
             
             if data.get('type') == 'frame':
-                # Decode base64 image
                 frame_data = data['data']
                 if ',' in frame_data:
                     frame_data = frame_data.split(',')[1]
@@ -82,18 +82,16 @@ def websocket(ws):
                 image = Image.open(BytesIO(image_bytes))
                 frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                 
-                # Process spots
                 spots = data.get('spots', [])
                 occupancy_map = detector.detect_occupancy(frame, spots)
-                
-                # Get debug info
                 debug_info = detector.get_debug_info()
                 
-                # Prepare response (ensure JSON serializable)
+                # Build response
                 response = {
                     'occupancyMap': {k: bool(v) for k, v in occupancy_map.items()},
                     'debug': {
-                        # All YOLO detections for debug overlay
+                        'frameSize': list(debug_info.get('frame_size', [0, 0])),
+                        # All raw detections for debug overlay
                         'allDetections': [
                             {
                                 'x1': int(d['x1']),
@@ -101,12 +99,13 @@ def websocket(ws):
                                 'x2': int(d['x2']),
                                 'y2': int(d['y2']),
                                 'conf': float(d['conf']),
-                                'cls': d['cls_name'],
-                                'isVehicle': bool(d['is_vehicle'])
+                                'cls': str(d['cls_name']),
+                                'isVehicle': bool(d.get('is_vehicle', False)),
+                                'isIgnored': bool(d.get('is_ignored', False))
                             }
-                            for d in debug_info.get('all_detections', [])
+                            for d in debug_info.get('raw_detections', [])
                         ],
-                        # Vehicle detections only
+                        # Vehicles only
                         'vehicleBoxes': [
                             {
                                 'x1': int(d['x1']),
@@ -114,20 +113,24 @@ def websocket(ws):
                                 'x2': int(d['x2']),
                                 'y2': int(d['y2']),
                                 'conf': float(d['conf']),
-                                'cls': d['cls_name']
+                                'cls': str(d['cls_name'])
                             }
                             for d in debug_info.get('vehicle_detections', [])
                         ],
                         # Per-spot info
                         'spotInfo': {
-                            spot_id: {
-                                'yoloRatio': float(info.get('yolo_ratio', 0)),
-                                'textureScore': float(info.get('texture_score', 0)),
-                                'occupied': bool(info.get('is_occupied', False)),
-                                'decision': str(info.get('decision', 'UNKNOWN'))
-                            }
+                            spot_id: safe_json({
+                                'yoloRatio': info.get('yolo_ratio', 0),
+                                'textureScore': info.get('texture_score', 0),
+                                'occupied': info.get('is_occupied', False),
+                                'decision': info.get('decision', 'UNKNOWN'),
+                                'bestDet': info.get('best_det', {}),
+                                'polyBounds': info.get('poly_bounds', []),
+                                'thresholds': info.get('thresholds', {})
+                            })
                             for spot_id, info in debug_info.get('spots', {}).items()
-                        }
+                        },
+                        'config': safe_json(debug_info.get('config', {}))
                     }
                 }
                 
@@ -137,7 +140,7 @@ def websocket(ws):
                 detector.set_config(**{k: v for k, v in data.items() if k != 'type'})
                 ws.send(json.dumps({
                     'type': 'config_updated',
-                    'config': detector.get_debug_info().get('config', {})
+                    'config': safe_json(detector.get_debug_info().get('config', {}))
                 }))
             
             elif data.get('type') == 'reset':
@@ -147,12 +150,12 @@ def websocket(ws):
         except json.JSONDecodeError as e:
             print(f'[Server] JSON error: {e}')
         except Exception as e:
-            print(f'[Server] WebSocket error: {e}')
+            print(f'[Server] Error: {e}')
             import traceback
             traceback.print_exc()
             break
     
-    print('[Server] WebSocket client disconnected')
+    print('[Server] WebSocket disconnected')
 
 
 if __name__ == '__main__':

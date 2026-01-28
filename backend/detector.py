@@ -2,11 +2,11 @@
 Parking spot occupancy detector using YOLOv8 + fallback texture analysis.
 
 Features:
-- YOLOv8 vehicle detection with extended classes
+- YOLOv8 vehicle detection with letterbox-aware coordinate mapping
 - Fallback texture/edge analysis when YOLO misses vehicles
 - Hysteresis thresholds to prevent flickering
 - Temporal smoothing with majority voting
-- Debug mode for diagnostics
+- Comprehensive debug mode
 """
 
 import cv2
@@ -20,34 +20,36 @@ from dataclasses import dataclass, field
 # Configuration
 # =============================================================================
 
+# Debug flag - set to True to see all detections
+DEBUG_DETECTION = True
+
 @dataclass
 class DetectorConfig:
     """Configuration for occupancy detection."""
     # YOLO settings
-    confidence_threshold: float = 0.20  # Lower threshold to catch more vehicles
-    nms_iou_threshold: float = 0.45     # NMS IoU threshold
+    confidence_threshold: float = 0.15  # Lower to catch more vehicles
+    nms_iou_threshold: float = 0.45
     
     # Hysteresis thresholds for YOLO-based detection
-    threshold_occupied: float = 0.15    # Become occupied if overlap >= this
-    threshold_free: float = 0.08        # Become free if overlap < this
+    threshold_occupied: float = 0.12    # Lower threshold for partial overlaps
+    threshold_free: float = 0.06
     
-    # Fallback texture analysis thresholds
-    texture_threshold_occupied: float = 25.0  # Edge density to consider occupied
-    texture_threshold_free: float = 15.0      # Edge density to consider free
+    # Fallback texture analysis thresholds - LOWERED for edge cases
+    texture_threshold_occupied: float = 18.0  # Was 25, now 18 to catch TEX: 21.9
+    texture_threshold_free: float = 12.0
     
     # Combined decision
-    use_fallback: bool = True  # Enable texture fallback
+    use_fallback: bool = True
     
     # Temporal smoothing
-    history_size: int = 8               # Number of frames to remember
-    min_consecutive_for_change: int = 3 # Require N consecutive same states
+    history_size: int = 10
+    min_consecutive_for_change: int = 3
     
     # Debug
-    debug_enabled: bool = True
-    debug_show_all_detections: bool = True  # Show all YOLO detections, not just vehicles
+    debug_enabled: bool = DEBUG_DETECTION
+    debug_show_all_detections: bool = True
 
 
-# Global config instance
 CONFIG = DetectorConfig()
 
 
@@ -56,7 +58,7 @@ CONFIG = DetectorConfig()
 # =============================================================================
 
 def polygon_area(polygon: np.ndarray) -> float:
-    """Calculate area of a polygon using Shoelace formula."""
+    """Calculate area using Shoelace formula."""
     n = len(polygon)
     if n < 3:
         return 0.0
@@ -70,10 +72,14 @@ def polygon_area(polygon: np.ndarray) -> float:
 
 
 def polygon_bbox_intersection_area(polygon: np.ndarray, bbox: Tuple[int, int, int, int]) -> float:
-    """Calculate intersection area between a polygon and a bounding box."""
+    """Calculate intersection area between polygon and bbox using masks."""
     x1, y1, x2, y2 = bbox
     
-    # Get bounds
+    # Ensure valid bbox
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    
+    # Get polygon bounds
     poly_x_min = int(polygon[:, 0].min())
     poly_y_min = int(polygon[:, 1].min())
     poly_x_max = int(polygon[:, 0].max())
@@ -114,13 +120,13 @@ def polygon_bbox_intersection_area(polygon: np.ndarray, bbox: Tuple[int, int, in
     cv2.fillPoly(mask_poly, [local_polygon], 255)
     cv2.fillPoly(mask_bbox, [local_bbox], 255)
     
-    # Compute intersection
+    # Intersection
     intersection = cv2.bitwise_and(mask_poly, mask_bbox)
     return float(cv2.countNonZero(intersection))
 
 
 def calculate_overlap_ratio(polygon: np.ndarray, bbox: Tuple[int, int, int, int]) -> float:
-    """Calculate what fraction of the polygon is covered by the bbox."""
+    """Calculate fraction of polygon covered by bbox."""
     poly_area = polygon_area(polygon)
     if poly_area < 1:
         return 0.0
@@ -129,43 +135,19 @@ def calculate_overlap_ratio(polygon: np.ndarray, bbox: Tuple[int, int, int, int]
     return intersection / poly_area
 
 
-def extract_polygon_roi(frame: np.ndarray, polygon: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Extract ROI from frame using polygon mask.
-    Returns (masked_region, mask).
-    """
-    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-    cv2.fillPoly(mask, [polygon], 255)
-    
-    # Get bounding rect for efficiency
-    x, y, w, h = cv2.boundingRect(polygon)
-    
-    # Ensure bounds are valid
-    x = max(0, x)
-    y = max(0, y)
-    w = min(w, frame.shape[1] - x)
-    h = min(h, frame.shape[0] - y)
-    
-    if w <= 0 or h <= 0:
-        return np.array([]), np.array([])
-    
-    roi = frame[y:y+h, x:x+w].copy()
-    roi_mask = mask[y:y+h, x:x+w]
-    
-    return roi, roi_mask
-
-
 # =============================================================================
-# Texture/Edge analysis for fallback detection
+# Texture/Edge analysis
 # =============================================================================
 
-def compute_texture_score(frame: np.ndarray, polygon: np.ndarray) -> float:
+def compute_texture_score(frame: np.ndarray, polygon: np.ndarray) -> Tuple[float, Dict]:
     """
-    Compute texture/edge density score for a parking spot region.
-    Higher score = more likely occupied (cars have more edges/texture).
+    Compute texture score for parking spot region.
+    Returns (score, debug_info).
     """
+    debug = {'edge_density': 0, 'intensity_std': 0, 'mean_intensity': 0}
+    
     if frame is None or len(polygon) < 3:
-        return 0.0
+        return 0.0, debug
     
     # Convert to grayscale
     if len(frame.shape) == 3:
@@ -177,45 +159,48 @@ def compute_texture_score(frame: np.ndarray, polygon: np.ndarray) -> float:
     mask = np.zeros(gray.shape, dtype=np.uint8)
     cv2.fillPoly(mask, [polygon], 255)
     
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Edge detection
-    edges = cv2.Canny(blurred, 50, 150)
-    
-    # Apply mask
-    masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
-    
-    # Calculate edge density
+    # Get area
     area = polygon_area(polygon)
     if area < 100:
-        return 0.0
+        return 0.0, debug
     
+    # Blur and edge detection
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 30, 100)  # Lower thresholds for more edges
+    
+    # Masked edge count
+    masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
     edge_count = cv2.countNonZero(masked_edges)
-    edge_density = (edge_count / area) * 100  # Percentage
+    edge_density = (edge_count / area) * 100
     
-    # Also compute intensity variance (cars have varied colors)
+    # Intensity stats
     masked_gray = cv2.bitwise_and(blurred, blurred, mask=mask)
     pixels = masked_gray[mask > 0]
     
-    if len(pixels) > 0:
-        intensity_std = np.std(pixels)
-    else:
-        intensity_std = 0
+    intensity_std = float(np.std(pixels)) if len(pixels) > 0 else 0
+    mean_intensity = float(np.mean(pixels)) if len(pixels) > 0 else 0
     
-    # Combined score: edge density + intensity variance contribution
-    combined_score = edge_density + (intensity_std * 0.3)
+    # Combined score
+    score = edge_density + (intensity_std * 0.5)
     
-    return float(combined_score)
+    debug = {
+        'edge_density': round(edge_density, 2),
+        'intensity_std': round(intensity_std, 2),
+        'mean_intensity': round(mean_intensity, 2),
+        'edge_count': edge_count,
+        'area': round(area, 0)
+    }
+    
+    return float(score), debug
 
 
 # =============================================================================
-# Temporal smoothing with hysteresis
+# Spot State with smoothing
 # =============================================================================
 
 @dataclass
 class SpotState:
-    """State for a single parking spot."""
+    """State for a single parking spot with hysteresis."""
     history: deque = field(default_factory=lambda: deque(maxlen=CONFIG.history_size))
     current_status: bool = False
     consecutive_count: int = 0
@@ -223,18 +208,18 @@ class SpotState:
     last_texture_score: float = 0.0
     
     def update(self, yolo_ratio: float, texture_score: float) -> bool:
-        """Update state and return final occupancy status."""
+        """Update and return occupancy status."""
         self.last_yolo_ratio = yolo_ratio
         self.last_texture_score = texture_score
         
-        # Determine raw status based on hysteresis
+        # Determine raw status
         if self.current_status:
-            # Currently occupied - check both YOLO and texture
+            # Currently occupied - need BOTH signals low to become free
             yolo_free = yolo_ratio < CONFIG.threshold_free
             texture_free = texture_score < CONFIG.texture_threshold_free
-            raw_occupied = not (yolo_free and texture_free)
+            raw_occupied = not (yolo_free and (not CONFIG.use_fallback or texture_free))
         else:
-            # Currently free - either YOLO or texture can trigger occupied
+            # Currently free - EITHER signal can trigger occupied
             yolo_occupied = yolo_ratio >= CONFIG.threshold_occupied
             texture_occupied = CONFIG.use_fallback and texture_score >= CONFIG.texture_threshold_occupied
             raw_occupied = yolo_occupied or texture_occupied
@@ -242,7 +227,7 @@ class SpotState:
         # Add to history
         self.history.append(raw_occupied)
         
-        # Count consecutive same states
+        # Count consecutive
         if len(self.history) >= 2:
             if self.history[-1] == self.history[-2]:
                 self.consecutive_count += 1
@@ -251,7 +236,7 @@ class SpotState:
         else:
             self.consecutive_count = 1
         
-        # Majority voting
+        # Majority voting with consecutive requirement
         if len(self.history) >= CONFIG.min_consecutive_for_change:
             occupied_count = sum(self.history)
             majority_occupied = occupied_count > len(self.history) / 2
@@ -263,36 +248,33 @@ class SpotState:
 
 
 # =============================================================================
-# Main detector class
+# Main Detector
 # =============================================================================
 
 class YOLOParkingDetector:
-    """Parking spot occupancy detector using YOLOv8 + texture fallback."""
+    """YOLOv8 parking detector with texture fallback."""
     
-    # Extended vehicle classes from COCO dataset
-    # 0: person, 1: bicycle, 2: car, 3: motorcycle, 4: airplane, 5: bus,
-    # 6: train, 7: truck, 8: boat
+    # Vehicle classes from COCO
     VEHICLE_CLASSES = {
         2: 'car',
-        3: 'motorcycle', 
+        3: 'motorcycle',
         5: 'bus',
         7: 'truck',
-        # Also include these in case of misclassification
-        1: 'bicycle',  # Sometimes motorcycles detected as bicycles
     }
+    
+    # Classes to ignore (false positives in parking lots)
+    IGNORE_CLASSES = {'snowboard', 'skateboard', 'sports ball', 'frisbee', 'kite'}
     
     def __init__(self, model_path: str = 'yolov8n.pt'):
         self.model = None
         self.model_path = model_path
         self._load_model()
         
-        # State for each parking spot
         self.spot_states: Dict[str, SpotState] = {}
-        
-        # Last frame detections for debug
-        self.last_all_detections: List[Dict] = []  # All YOLO detections
-        self.last_vehicle_detections: List[Dict] = []  # Filtered vehicles only
+        self.last_raw_detections: List[Dict] = []
+        self.last_vehicle_detections: List[Dict] = []
         self.last_debug_info: Dict[str, Dict] = {}
+        self.frame_size: Tuple[int, int] = (0, 0)
     
     def _load_model(self):
         """Load YOLO model."""
@@ -300,11 +282,8 @@ class YOLOParkingDetector:
             from ultralytics import YOLO
             self.model = YOLO(self.model_path)
             print(f'[Detector] YOLOv8 loaded: {self.model_path}')
-            print(f'[Detector] Confidence threshold: {CONFIG.confidence_threshold}')
-            print(f'[Detector] Vehicle classes: {list(self.VEHICLE_CLASSES.values())}')
-        except ImportError:
-            print('[Detector] ERROR: ultralytics not installed')
-            self.model = None
+            print(f'[Detector] Conf threshold: {CONFIG.confidence_threshold}')
+            print(f'[Detector] Texture threshold: {CONFIG.texture_threshold_occupied}')
         except Exception as e:
             print(f'[Detector] ERROR: {e}')
             self.model = None
@@ -314,51 +293,57 @@ class YOLOParkingDetector:
         if frame is None or len(spots) == 0:
             return {}
         
-        # Run YOLO detection
-        all_detections = []
-        vehicle_boxes = []
+        self.frame_size = (frame.shape[1], frame.shape[0])  # width, height
+        
+        # Run YOLO
+        raw_detections = []
+        vehicle_detections = []
         
         if self.model is not None:
             try:
+                # YOLO handles letterbox internally and returns coords in original frame space
                 results = self.model(
-                    frame, 
-                    verbose=False, 
+                    frame,
+                    verbose=False,
                     conf=CONFIG.confidence_threshold,
                     iou=CONFIG.nms_iou_threshold
                 )[0]
                 
-                # Get class names
                 class_names = results.names
                 
                 for box in results.boxes:
                     cls_id = int(box.cls[0])
                     conf = float(box.conf[0])
                     x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                    cls_name = class_names.get(cls_id, f'cls_{cls_id}')
                     
-                    cls_name = class_names.get(cls_id, f'class_{cls_id}')
+                    is_vehicle = cls_id in self.VEHICLE_CLASSES
+                    is_ignored = cls_name.lower() in self.IGNORE_CLASSES
                     
-                    detection = {
+                    det = {
                         'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
                         'conf': conf,
                         'cls_id': cls_id,
                         'cls_name': cls_name,
-                        'is_vehicle': cls_id in self.VEHICLE_CLASSES
+                        'is_vehicle': is_vehicle,
+                        'is_ignored': is_ignored,
+                        'bbox_area': (x2 - x1) * (y2 - y1)
                     }
-                    all_detections.append(detection)
+                    raw_detections.append(det)
                     
-                    if cls_id in self.VEHICLE_CLASSES:
-                        vehicle_boxes.append((x1, y1, x2, y2, conf, cls_id))
+                    if is_vehicle and not is_ignored:
+                        vehicle_detections.append(det)
                 
             except Exception as e:
                 print(f'[Detector] YOLO error: {e}')
         
-        self.last_all_detections = all_detections
-        self.last_vehicle_detections = [d for d in all_detections if d['is_vehicle']]
+        self.last_raw_detections = raw_detections
+        self.last_vehicle_detections = vehicle_detections
         
         if CONFIG.debug_enabled:
-            print(f'[Detector] Total detections: {len(all_detections)}, Vehicles: {len(vehicle_boxes)}')
+            print(f'[Detector] Frame {self.frame_size}, Raw detections: {len(raw_detections)}, Vehicles: {len(vehicle_detections)}')
         
-        # Process each parking spot
+        # Process spots
         occupancy_map = {}
         self.last_debug_info = {}
         
@@ -369,55 +354,84 @@ class YOLOParkingDetector:
             if not spot_id or len(polygon_data) < 3:
                 continue
             
+            # Polygon in video-space (native coordinates)
             polygon = np.array([[int(p['x']), int(p['y'])] for p in polygon_data], dtype=np.int32)
             poly_area = polygon_area(polygon)
             
-            if poly_area < 100:
+            if poly_area < 50:
                 occupancy_map[spot_id] = False
                 continue
             
-            # Initialize spot state
+            # Initialize state
             if spot_id not in self.spot_states:
                 self.spot_states[spot_id] = SpotState()
             
-            # Find maximum overlap with any vehicle
+            # Find best vehicle overlap
             max_ratio = 0.0
-            best_vehicle = None
+            best_det = None
+            all_overlaps = []
             
-            for (x1, y1, x2, y2, conf, cls_id) in vehicle_boxes:
-                ratio = calculate_overlap_ratio(polygon, (x1, y1, x2, y2))
+            for det in vehicle_detections:
+                bbox = (det['x1'], det['y1'], det['x2'], det['y2'])
+                ratio = calculate_overlap_ratio(polygon, bbox)
+                all_overlaps.append({'det': det['cls_name'], 'conf': det['conf'], 'ratio': ratio})
+                
                 if ratio > max_ratio:
                     max_ratio = ratio
-                    best_vehicle = {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2, 'conf': conf}
+                    best_det = det
             
-            # Compute texture fallback score
-            texture_score = compute_texture_score(frame, polygon) if CONFIG.use_fallback else 0.0
+            # Compute texture fallback
+            texture_score, texture_debug = compute_texture_score(frame, polygon)
             
-            # Update spot state with both signals
+            # Update state
             is_occupied = self.spot_states[spot_id].update(max_ratio, texture_score)
             occupancy_map[spot_id] = bool(is_occupied)
+            
+            # Determine decision source
+            yolo_triggered = max_ratio >= CONFIG.threshold_occupied
+            texture_triggered = texture_score >= CONFIG.texture_threshold_occupied
+            
+            if yolo_triggered:
+                decision = 'YOLO'
+            elif texture_triggered:
+                decision = 'TEXTURE'
+            else:
+                decision = 'FREE'
             
             # Store debug info
             self.last_debug_info[spot_id] = {
                 'yolo_ratio': float(max_ratio),
                 'texture_score': float(texture_score),
+                'texture_debug': texture_debug,
                 'is_occupied': bool(is_occupied),
-                'best_vehicle': best_vehicle,
+                'decision': decision,
+                'best_det': {
+                    'cls': best_det['cls_name'] if best_det else None,
+                    'conf': best_det['conf'] if best_det else 0,
+                    'bbox': [best_det['x1'], best_det['y1'], best_det['x2'], best_det['y2']] if best_det else None
+                },
+                'all_overlaps': all_overlaps,
+                'poly_bounds': [int(polygon[:, 0].min()), int(polygon[:, 1].min()),
+                               int(polygon[:, 0].max()), int(polygon[:, 1].max())],
                 'poly_area': float(poly_area),
-                'decision': 'YOLO' if max_ratio >= CONFIG.threshold_occupied else ('TEXTURE' if texture_score >= CONFIG.texture_threshold_occupied else 'FREE')
+                'thresholds': {
+                    'yolo_occupied': CONFIG.threshold_occupied,
+                    'yolo_free': CONFIG.threshold_free,
+                    'texture_occupied': CONFIG.texture_threshold_occupied,
+                    'texture_free': CONFIG.texture_threshold_free
+                }
             }
             
             if CONFIG.debug_enabled:
-                status = "OCCUPIED" if is_occupied else "FREE"
-                decision = self.last_debug_info[spot_id]['decision']
-                print(f'[Detector] {spot_id}: yolo={max_ratio:.1%}, texture={texture_score:.1f}, status={status} ({decision})')
+                print(f'[Detector] {spot_id}: YOLO={max_ratio:.1%} TEX={texture_score:.1f} -> {decision} ({is_occupied})')
         
         return occupancy_map
     
     def get_debug_info(self) -> Dict[str, Any]:
-        """Get debug information for visualization."""
+        """Get comprehensive debug info."""
         return {
-            'all_detections': self.last_all_detections,
+            'frame_size': self.frame_size,
+            'raw_detections': self.last_raw_detections,
             'vehicle_detections': self.last_vehicle_detections,
             'spots': self.last_debug_info,
             'config': {
@@ -427,24 +441,24 @@ class YOLOParkingDetector:
                 'texture_threshold_occupied': CONFIG.texture_threshold_occupied,
                 'texture_threshold_free': CONFIG.texture_threshold_free,
                 'use_fallback': CONFIG.use_fallback,
+                'history_size': CONFIG.history_size,
             }
         }
     
     def reset(self):
-        """Reset all spot states."""
+        """Reset states."""
         self.spot_states.clear()
-        self.last_all_detections = []
+        self.last_raw_detections = []
         self.last_vehicle_detections = []
         self.last_debug_info = {}
     
     @staticmethod
     def set_config(**kwargs):
-        """Update detector configuration."""
+        """Update configuration."""
         for key, value in kwargs.items():
             if hasattr(CONFIG, key) and value is not None:
                 setattr(CONFIG, key, value)
-                print(f'[Detector] Config {key} = {value}')
+                print(f'[Detector] {key} = {value}')
 
 
-# Alias
 ParkingDetector = YOLOParkingDetector

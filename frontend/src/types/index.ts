@@ -39,6 +39,7 @@ export interface Detection {
   conf: number;
   cls: string;
   isVehicle?: boolean;
+  isIgnored?: boolean;
 }
 
 export interface SpotDebugInfo {
@@ -46,10 +47,24 @@ export interface SpotDebugInfo {
   textureScore: number;
   occupied: boolean;
   decision: string;
+  bestDet?: {
+    cls: string | null;
+    conf: number;
+    bbox: number[] | null;
+  };
+  polyBounds?: number[];
+  thresholds?: {
+    yolo_occupied: number;
+    yolo_free: number;
+    texture_occupied: number;
+    texture_free: number;
+  };
 }
 
 export interface DebugInfo {
+  frameSize?: number[];
   allDetections?: Detection[];
   vehicleBoxes?: Detection[];
   spotInfo: Record<string, SpotDebugInfo>;
+  config?: Record<string, number | boolean>;
 }
