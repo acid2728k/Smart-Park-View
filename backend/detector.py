@@ -34,10 +34,11 @@ class DetectorConfig:
     yolo_threshold_free: float = 0.06
     
     # Edge-based detection (primary fallback for top-view)
-    edge_density_threshold_occupied: float = 4.5  # % of edges in ROI
-    edge_density_threshold_free: float = 2.5
-    intensity_std_threshold_occupied: float = 25.0
-    intensity_std_threshold_free: float = 15.0
+    # Higher thresholds to avoid false positives from shadows/texture
+    edge_density_threshold_occupied: float = 7.0  # % of edges in ROI (raised from 4.5)
+    edge_density_threshold_free: float = 4.0
+    intensity_std_threshold_occupied: float = 40.0  # raised from 25 to avoid shadow false positives
+    intensity_std_threshold_free: float = 25.0
     
     # Diff-based thresholds (when baseline available)
     diff_mean_threshold_occupied: float = 18.0
@@ -58,9 +59,9 @@ class DetectorConfig:
     # Only capture baseline when edge density is low (spot looks empty)
     baseline_max_edge_density: float = 3.0
     
-    # Temporal smoothing
-    history_size: int = 10
-    min_consecutive_for_change: int = 3
+    # Temporal smoothing (reduced for faster response)
+    history_size: int = 5
+    min_consecutive_for_change: int = 2
     
     # Debug
     debug_enabled: bool = DEBUG_DETECTION
@@ -292,7 +293,7 @@ class SpotState:
     last_diff_mean: float = 0.0
     last_changed_ratio: float = 0.0
     
-    def update(self, raw_occupied: bool) -> bool:
+    def update(self, raw_occupied: bool, yolo_ratio: float = 0.0) -> bool:
         """Update state with new raw detection result."""
         self.history.append(raw_occupied)
         
@@ -301,7 +302,17 @@ class SpotState:
         else:
             self.consecutive_free_count = 0
         
-        # Majority voting with consecutive requirement
+        # INSTANT switch when YOLO is confident (>30% overlap = car clearly visible)
+        if yolo_ratio >= 0.30:
+            self.current_status = True
+            return self.current_status
+        
+        # INSTANT switch to free when YOLO sees nothing for a while
+        if yolo_ratio < 0.02 and self.consecutive_free_count >= 3:
+            self.current_status = False
+            return self.current_status
+        
+        # Majority voting with consecutive requirement for uncertain cases
         if len(self.history) >= CONFIG.min_consecutive_for_change:
             occupied_count = sum(self.history)
             majority_occupied = occupied_count > len(self.history) / 2
@@ -328,7 +339,7 @@ class YOLOParkingDetector:
     """YOLOv8 parking detector with edge-based fallback."""
     
     VEHICLE_CLASSES = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
-    IGNORE_CLASSES = {'snowboard', 'skateboard', 'sports ball', 'frisbee', 'kite'}
+    IGNORE_CLASSES = {'snowboard', 'skateboard', 'sports ball', 'frisbee', 'kite', 'cell phone', 'remote', 'laptop', 'mouse', 'keyboard'}
     
     def __init__(self, model_path: str = 'yolov8n.pt'):
         self.model = None
@@ -537,7 +548,8 @@ class YOLOParkingDetector:
                             decision = 'EDGE_HOLD'
                     else:
                         # Currently free - check if became occupied
-                        edge_occupied = (edge_density >= CONFIG.edge_density_threshold_occupied or
+                        # Require BOTH conditions to avoid false positives from shadows/texture
+                        edge_occupied = (edge_density >= CONFIG.edge_density_threshold_occupied and
                                         intensity_std >= CONFIG.intensity_std_threshold_occupied)
                         if edge_occupied:
                             raw_occupied = True
@@ -561,8 +573,8 @@ class YOLOParkingDetector:
                             raw_occupied = True
                             decision = 'DIFF_OCC'
             
-            # Update state with smoothing
-            is_occupied = state.update(raw_occupied)
+            # Update state with smoothing (pass yolo_ratio for instant switching)
+            is_occupied = state.update(raw_occupied, max_ratio)
             occupancy_map[spot_id] = bool(is_occupied)
             
             # Baseline management
