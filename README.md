@@ -1,6 +1,6 @@
 # Smart Park View
 
-A minimalist web application for tracking occupied and free parking spots using top-view video surveillance.
+A minimalist web application for tracking occupied and free parking spots using top-view video surveillance
 
 ## Features
 
